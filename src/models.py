@@ -223,7 +223,6 @@ class OfflineItemSimilarity:
                     self.itemSimBest[cur_item][related_item] = score / math.sqrt(N[cur_item] * N[related_item])
             self._save_dict(self.itemSimBest, save_path=save_path)
         elif self.model_name == 'Item2Vec':
-            # details here: https://github.com/RaRe-Technologies/gensim/blob/develop/gensim/models/word2vec.py
             print("Step 1: train item2vec model")
             item2vec_model = gensim.models.Word2Vec(sentences=self.train_data_list,
                                         vector_size=20, window=5, min_count=0,
