@@ -118,9 +118,9 @@ def main():
 
 
     # add perturbation via method sequence item gru
-    parser.add_argument("--method_item", default='No', type=str, help='whether add perturbation via method 3-1 ')
-    parser.add_argument("--method_sequence", default='No', type=str, help='whether add perturbation via method 3-2')
-    parser.add_argument("--method_gru", default='Yes', type=str, help='whether add perturbation via method 3-3')
+    parser.add_argument("--method_item", default='No', type=str, help='whether add perturbation via item-level ')
+    parser.add_argument("--method_sequence", default='No', type=str, help='whether add perturbation via sequence-level')
+    parser.add_argument("--method_gru", default='Yes', type=str, help='whether add perturbation via gru model')
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
 
     args = parser.parse_args()
