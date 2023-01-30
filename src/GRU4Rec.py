@@ -80,13 +80,6 @@ class GRU4RecModel(nn.Module):
         scores = torch.matmul(seq_output, test_items_emb.transpose(0, 1))  # [B, n_items]
         return scores
 
-
-
-
-
-
-
-
 if __name__ == '__main__':
     onlineitemsim = OnlineItemSimilarity(item_size=10)
     item_embeddings = nn.Embedding(10, 6, padding_idx=0)
