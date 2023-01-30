@@ -51,7 +51,6 @@ class Trainer:
             i.requires_grad = True
         self.max_optimizer = Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr, betas=betas,
                           weight_decay=self.args.weight_decay)
-        # max_scheduler = torch.optim.lr_scheduler.StepLR(max_optimizer, 1, gamma=0.25)  # gamma: lr_decay
 
         # min_optimizer
         for i in model.parameters():
@@ -101,12 +100,6 @@ class Trainer:
         for k in [5, 10, 15, 20]:
             recall.append(recall_at_k(answers, pred_list, k))
             ndcg.append(ndcg_k(answers, pred_list, k))
-        # post_fix = {
-        #     "Epoch": epoch,
-        #     "HIT@5": '{:.4f}'.format(recall[0]), "NDCG@5": '{:.4f}'.format(ndcg[0]),
-        #     "HIT@10": '{:.4f}'.format(recall[1]), "NDCG@10": '{:.4f}'.format(ndcg[1]),
-        #     "HIT@20": '{:.4f}'.format(recall[3]), "NDCG@20": '{:.4f}'.format(ndcg[3])
-        # }
         post_fix = {
             "HIT@5": '{:.4f}'.format(recall[0]), "NDCG@5": '{:.4f}'.format(ndcg[0]),
             "HIT@10": '{:.4f}'.format(recall[1]), "NDCG@10": '{:.4f}'.format(ndcg[1]),
@@ -121,11 +114,6 @@ class Trainer:
         for k in [5, 10, 20]:
             recall.append(recall_at_k(answers, pred_list, k))
             ndcg.append(ndcg_k(answers, pred_list, k))
-        # post_fix = {
-        #     "Epoch": epoch,
-        #     "HIT@5": '{:.4f}'.format(recall[0]), "HIT@10": '{:.4f}'.format(recall[1]),"HIT@20": '{:.4f}'.format(recall[2]),
-        #     "NDCG@5": '{:.4f}'.format(ndcg[0]),"NDCG@10": '{:.4f}'.format(ndcg[1]),"NDCG@20": '{:.4f}'.format(ndcg[2])
-        # }
         post_fix = {
             "HIT@5": eval('{:.4f}'.format(recall[0])), "HIT@10": eval('{:.4f}'.format(recall[1])),"HIT@20": eval('{:.4f}'.format(recall[2])),
             "NDCG@5": eval('{:.4f}'.format(ndcg[0])), "NDCG@10": eval('{:.4f}'.format(ndcg[1])), "NDCG@20": eval('{:.4f}'.format(ndcg[2]))
@@ -235,8 +223,7 @@ class SoftCSRTrainer(Trainer):
         cl_sequence_flatten = cl_sequence_output.view(cl_batch.shape[0], -1)
         batch_size = cl_batch.shape[0] // 2  # 256
         cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
-        #print("cl_output_slice==",cl_output_slice[0].size()) #torch.Size([256, 3200])
-
+ 
         cl_loss_1 = self.cf_criterion(origin_output_slice,cl_output_slice[0])
 
         cl_loss_2 = self.cf_criterion(origin_output_slice,cl_output_slice[1])
