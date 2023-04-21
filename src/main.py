@@ -111,18 +111,21 @@ def main():
     parser.add_argument("--adv_step", type=int, default=1, help="train step for the perturbation iterations")
     parser.add_argument("--eta", type=float, default=0.9, help="eta in method_sequence ")
     parser.add_argument("--norm_type", default='l2', type=str, help='normal type')
-    # perturbation
+    # perturbation gradient-based
     parser.add_argument("--epsilon_sequence", type=float, default=1e-6, help="epsilon in method_sequence ")
     parser.add_argument("--epsilon_item", type=float, default=1e-6, help="epsilon in method_item ")
-    parser.add_argument("--epsilon_gru", type=float, default=1e-6, help="epsilon in method_gru ")
-
+    
 
     # add perturbation via method sequence item gru
     parser.add_argument("--method_item", default='No', type=str, help='whether add perturbation via item-level ')
     parser.add_argument("--method_sequence", default='No', type=str, help='whether add perturbation via sequence-level')
     parser.add_argument("--method_gru", default='Yes', type=str, help='whether add perturbation via gru model')
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
-
+    
+    #perturbation model-based
+    parser.add_argument("--gamma_gru", type=float, default=0.9, help="gamma in method_gru ")
+    parser.add_argument("--sigma_gru", type=float, default=1e-6, help="sigma in method_gru ")
+    
     args = parser.parse_args()
 
     set_seed(args.seed)
