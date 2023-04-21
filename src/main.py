@@ -111,6 +111,7 @@ def main():
     parser.add_argument("--adv_step", type=int, default=1, help="train step for the perturbation iterations")
     parser.add_argument("--eta", type=float, default=0.9, help="eta in method_sequence ")
     parser.add_argument("--norm_type", default='l2', type=str, help='normal type')
+    
     # perturbation gradient-based
     parser.add_argument("--epsilon_sequence", type=float, default=1e-6, help="epsilon in method_sequence ")
     parser.add_argument("--epsilon_item", type=float, default=1e-6, help="epsilon in method_item ")
