@@ -371,8 +371,8 @@ class SoftCSRTrainer(Trainer):
                         if self.args.method_gru == "Yes":
                             cl_item_output = self.model.item_embeddings(cl_batch)
                             item_per = self.model.GRU4per(cl_item_output) * 1e-5
-                            item_per = self.adv_project(item_per, norm_type=self.args.norm_type, eps=self.args.epsilon_gru)
-                            perturbed_item_gru = cl_item_output + self.args.eta * item_per.detach()
+                            item_per = item_per / (torch.norm(item_per, dim=-1, keepdim=True) + self.args.sigma_gru)
+                            perturbed_item_gru = cl_item_output + self.args.gamma_gru * item_per.detach()
                             # train Again
                             perturbed_sequence = self.model.forward(cl_batch, perturbed_item_gru)
                             cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
