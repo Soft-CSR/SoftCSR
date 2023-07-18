@@ -7,13 +7,12 @@ import torch
 import argparse
 import time
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-
+import time
 from datasets import RecWithContrastiveLearningDataset
 
 from trainers import SoftCSRTrainer
-from models import  OfflineItemSimilarity, OnlineItemSimilarity,SASRecGRU4per
+from models import  OfflineItemSimilarity, OnlineItemSimilarity, SASRecGRU4per
 from utils import EarlyStopping, get_user_seqs, get_item2attribute_json, check_path, set_seed,get_local_time
-from modules import GRU4per
 
 def show_args_info(args):
     print(f"--------------------Configure Info:------------")
@@ -22,11 +21,13 @@ def show_args_info(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    # system args
+    # system
     parser.add_argument('--data_dir', default='../data/', type=str)
     parser.add_argument('--output_dir', default='output/', type=str)
     parser.add_argument('--data_name', default='Beauty', type=str)
     parser.add_argument('--do_eval', action='store_true')
+
+    #parser.add_argument('--do_eval', type=int, default='0')
     parser.add_argument("--gpu_id", type=str, default="2", help="gpu_id")
 
     # data augmentation args
@@ -94,39 +95,34 @@ def main():
                         help="weight of contrastive learning task")
     # outer minimize
     parser.add_argument("--alpha", type=float, default=0.1, help="weight of contrastive learning task")
-    parser.add_argument("--alpha_1", type=float, default=0.1, help="weight of contrastive learning task")
-    parser.add_argument("--alpha_2", type=float, default=0.1, help="weight of contrastive learning task")
+    parser.add_argument("--alpha_1", type=float, default=0.001, help="weight of contrastive learning task")
+    parser.add_argument("--alpha_2", type=float, default=0.001, help="weight of contrastive learning task")
     # inner maximize
-    parser.add_argument("--beta_0", type=float, default=0.01, \
+    parser.add_argument("--beta_0", type=float, default=0.0001, \
                         help="weight of contrastive learning task replace beta in paper")
-    parser.add_argument("--beta_1", type=float, default=0.01, \
+    parser.add_argument("--beta_1", type=float, default=0.001, \
                         help="weight of contrastive learning task")
-    parser.add_argument("--beta_2", type=float, default=0.01, \
+    parser.add_argument("--beta_2", type=float, default=0.001, \
                         help="weight of contrastive learning task")
 
     # learning related
     parser.add_argument("--weight_decay", type=float, default=0.0, help="weight_decay of adam")
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="adam first beta value")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="adam second beta value")
-    parser.add_argument("--adv_step", type=int, default=1, help="train step for the perturbation iterations")
-    parser.add_argument("--eta", type=float, default=0.9, help="eta in method_sequence ")
+    parser.add_argument("--adv_step", type=int, default=5, help="train step for the perturbation iterations")
+    parser.add_argument("--eta", type=float, default=0.5, help="eta in method_sequence ")
     parser.add_argument("--norm_type", default='l2', type=str, help='normal type')
-    
-    # perturbation gradient-based
-    parser.add_argument("--epsilon_sequence", type=float, default=1e-6, help="epsilon in method_sequence ")
-    parser.add_argument("--epsilon_item", type=float, default=1e-6, help="epsilon in method_item ")
-    
+    # perturbation
+    parser.add_argument("--epsilon_sequence", type=float, default=0.1, help="epsilon in method_sequence ")
+    parser.add_argument("--epsilon_item", type=float, default=0.1, help="epsilon in method_item ")
+    parser.add_argument("--epsilon_gru", type=float, default=0.1, help="epsilon in method_gru ")
 
     # add perturbation via method sequence item gru
-    parser.add_argument("--method_item", default='No', type=str, help='whether add perturbation via item-level ')
-    parser.add_argument("--method_sequence", default='No', type=str, help='whether add perturbation via sequence-level')
-    parser.add_argument("--method_gru", default='Yes', type=str, help='whether add perturbation via gru model')
+    parser.add_argument("--method_sequence", default='No', type=str, help='whether add perturbation via method 3-1')
+    parser.add_argument("--method_item", default='No', type=str, help='whether add perturbation via method 3-2 ')
+    parser.add_argument("--method_gru_theta_update", default='Yes', type=str, help='whether add perturbation via method 3-3-plus')
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
-    
-    #perturbation model-based
-    parser.add_argument("--gamma_gru", type=float, default=0.9, help="gamma in method_gru ")
-    parser.add_argument("--sigma_gru", type=float, default=1e-6, help="sigma in method_gru ")
-    
+
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -145,7 +141,7 @@ def main():
     nowtime = get_local_time()
     # save model args
 
-    args_str = f'{args.model_name}-{args.base_model_name}-{args.data_name}-{args.adv_step}-{args.method_item}-{args.method_sequence}-{args.method_gru}-{args.alpha}-{args.alpha_1}-{args.alpha_2}-{args.beta_0}-{args.beta_1}-{args.beta_2}-{args.norm_type}-{args.eta}-{nowtime}'
+    args_str = f'{args.model_name}-{args.base_model_name}-{args.data_name}-{nowtime}'
     args.log_file = os.path.join(args.output_dir, args_str + '.txt')
     
     show_args_info(args)
@@ -172,9 +168,7 @@ def main():
     args.offline_similarity_model = offline_similarity_model
 
     # -----------   online based on shared item embedding for item similarity --------- #
-
     online_similarity_model = OnlineItemSimilarity(item_size=args.item_size)
-
     args.online_similarity_model = online_similarity_model
 
     # training data for node classification

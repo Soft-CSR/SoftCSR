@@ -20,6 +20,7 @@ class NCELoss(nn.Module):
         self.temperature = temperature
         self.cossim = nn.CosineSimilarity(dim=-1).to(self.device)
         
+    # #modified based on impl: https://github.com/ae-foster/pytorch-simclr/blob/dc9ac57a35aec5c7d7d5fe6dc070a975f493c1a5/critic.py#L5
     def forward(self, batch_sample_one, batch_sample_two):
         #print("batch_sample_one", batch_sample_one.size())
         sim11 = torch.matmul(batch_sample_one, batch_sample_one.T) / self.temperature
@@ -163,6 +164,7 @@ class Embeddings(nn.Module):
         items_embeddings = self.item_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
         embeddings = items_embeddings + position_embeddings
+        # 修改属性
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -184,6 +186,7 @@ class SelfAttention(nn.Module):
 
         self.attn_dropout = nn.Dropout(args.attention_probs_dropout_prob)
 
+        # 做完self-attention 做一个前馈全连接 LayerNorm 输出
         self.dense = nn.Linear(args.hidden_size, args.hidden_size)
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
         self.out_dropout = nn.Dropout(args.hidden_dropout_prob)
@@ -316,6 +319,11 @@ class GRU4perORGIN(nn.Module):
             xavier_uniform_(self.gru_layers.weight_ih_l0)
 
     def forward(self, input_ids):
+        #item_seq_emb = self.item_embeddings(input_ids)
+        #item_seq_emb_dropout = self.emb_dropout(item_seq_emb)
+        #gru_per, _ = self.gru_layers(item_seq_emb_dropout)
+        #gru_per = self.dense(gru_per)
+
         item_seq_emb_dropout_per = self.emb_dropout(input_ids)
         gru_per, _ = self.gru_layers(item_seq_emb_dropout_per)
         gru_per = self.dense(gru_per)
@@ -345,6 +353,10 @@ class GRU4per(nn.Module):
 
     def forward(self, input_ids_embed):
         item_seq_emb_dropout_per = self.emb_dropout(input_ids_embed)
-        gru_per, _ = self.gru_layers(item_seq_emb_dropout_per)
+        # print("item_seq_emb_dropout_per",item_seq_emb_dropout_per.size())
+        gru_per, hidden = self.gru_layers(item_seq_emb_dropout_per)
+        # print("gru_per", gru_per.size())
+        # print("hidden", hidden[-1].size())
+        # exit()
         gru_per = self.dense(gru_per)
-        return gru_per
+        return gru_per,hidden

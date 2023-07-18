@@ -21,8 +21,14 @@ class SASRecGRU4per(nn.Module):
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(args.hidden_dropout_prob)
         self.args = args
-
-        self.GRU4per = GRU4per(args)
+        self.gru_layers = nn.GRU(
+            input_size=args.embedding_size,
+            hidden_size=args.hidden_size,
+            num_layers=2,
+            bias=False,
+            batch_first=True,
+        )
+        #self.GRU4per = GRU4per(args)
 
         self.criterion = nn.BCELoss(reduction='none')
         self.apply(self.init_weights)
@@ -36,6 +42,10 @@ class SASRecGRU4per(nn.Module):
         else:
             item_embeddings = VAT_embed
         position_embeddings = self.position_embeddings(position_ids)
+        # if self.args.method_gru_theta_update == "Yes":
+        #     delta,_ =self.gru_layers(item_embeddings)
+        #     sequence_emb = delta+item_embeddings + position_embeddings
+        # else:
         sequence_emb = item_embeddings + position_embeddings
 
         sequence_emb = self.LayerNorm(sequence_emb)
@@ -223,6 +233,7 @@ class OfflineItemSimilarity:
                     self.itemSimBest[cur_item][related_item] = score / math.sqrt(N[cur_item] * N[related_item])
             self._save_dict(self.itemSimBest, save_path=save_path)
         elif self.model_name == 'Item2Vec':
+            # details here: https://github.com/RaRe-Technologies/gensim/blob/develop/gensim/models/word2vec.py
             print("Step 1: train item2vec model")
             item2vec_model = gensim.models.Word2Vec(sentences=self.train_data_list,
                                         vector_size=20, window=5, min_count=0,

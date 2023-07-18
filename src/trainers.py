@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from datasets import RecWithContrastiveLearningDataset
 from modules import NCELoss, NTXent,GRU4per
 from utils import recall_at_k, ndcg_k, get_metric, get_user_seqs, nCr
+from GRU_PGD import Gru_PGD
 
 class Trainer:
     def __init__(self, model, train_dataloader,
@@ -24,7 +25,6 @@ class Trainer:
         self.device = torch.device("cuda" if self.cuda_condition else "cpu")
 
         self.model = model
-        #self.model_per = GRU4per
         self.online_similarity_model = args.online_similarity_model
 
         self.total_augmentaion_pairs = nCr(self.args.n_views, 2)
@@ -34,29 +34,19 @@ class Trainer:
                                         nn.Linear(512, self.args.hidden_size, bias=True))
         if self.cuda_condition:
             self.model.cuda()
-            #self.model_per.cuda()
             self.projection.cuda()
         # Setting the train and test data loader
         self.train_dataloader = train_dataloader
         self.eval_dataloader = eval_dataloader
         self.test_dataloader = test_dataloader
 
-        # self.data_name = self.args.data_name
         betas = (self.args.adam_beta1, self.args.adam_beta2)
-
-        # max_optimizer
-        for i in self.model.parameters():
-            i.requires_grad = False
-        for i in self.model.GRU4per.parameters():
-            i.requires_grad = True
-        self.max_optimizer = Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr, betas=betas,
-                          weight_decay=self.args.weight_decay)
 
         # min_optimizer
         for i in model.parameters():
             i.requires_grad = True
-        for i in model.GRU4per.parameters():
-            i.requires_grad = False
+        # for i in model.GRU4per.parameters():
+        #     i.requires_grad = False
         self.min_optimizer = Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr, betas=betas,
                           weight_decay=self.args.weight_decay)
 
@@ -100,6 +90,12 @@ class Trainer:
         for k in [5, 10, 15, 20]:
             recall.append(recall_at_k(answers, pred_list, k))
             ndcg.append(ndcg_k(answers, pred_list, k))
+        # post_fix = {
+        #     "Epoch": epoch,
+        #     "HIT@5": '{:.4f}'.format(recall[0]), "NDCG@5": '{:.4f}'.format(ndcg[0]),
+        #     "HIT@10": '{:.4f}'.format(recall[1]), "NDCG@10": '{:.4f}'.format(ndcg[1]),
+        #     "HIT@20": '{:.4f}'.format(recall[3]), "NDCG@20": '{:.4f}'.format(ndcg[3])
+        # }
         post_fix = {
             "HIT@5": '{:.4f}'.format(recall[0]), "NDCG@5": '{:.4f}'.format(ndcg[0]),
             "HIT@10": '{:.4f}'.format(recall[1]), "NDCG@10": '{:.4f}'.format(ndcg[1]),
@@ -114,6 +110,11 @@ class Trainer:
         for k in [5, 10, 20]:
             recall.append(recall_at_k(answers, pred_list, k))
             ndcg.append(ndcg_k(answers, pred_list, k))
+        # post_fix = {
+        #     "Epoch": epoch,
+        #     "HIT@5": '{:.4f}'.format(recall[0]), "HIT@10": '{:.4f}'.format(recall[1]),"HIT@20": '{:.4f}'.format(recall[2]),
+        #     "NDCG@5": '{:.4f}'.format(ndcg[0]),"NDCG@10": '{:.4f}'.format(ndcg[1]),"NDCG@20": '{:.4f}'.format(ndcg[2])
+        # }
         post_fix = {
             "HIT@5": eval('{:.4f}'.format(recall[0])), "HIT@10": eval('{:.4f}'.format(recall[1])),"HIT@20": eval('{:.4f}'.format(recall[2])),
             "NDCG@5": eval('{:.4f}'.format(ndcg[0])), "NDCG@10": eval('{:.4f}'.format(ndcg[1])), "NDCG@20": eval('{:.4f}'.format(ndcg[2]))
@@ -198,17 +199,15 @@ class SoftCSRTrainer(Trainer):
 
         return cl_loss
 
-    def adv_project(self,grad, norm_type='inf', eps=1e-6):
+    def project(self,delta,eps=1e-6):
         """
-        L0,L1,L2
+        norm
         """
-        if norm_type == 'l2':
-            direction = grad / (torch.norm(grad, dim=-1, keepdim=True) + eps)
-        elif norm_type == 'l1':
-            direction = grad.sign()
-        else:
-            direction = grad / (grad.abs().max(-1, keepdim=True)[0] + eps)
-        return direction
+        norm = torch.norm(delta)
+        if norm > eps:
+            delta = eps * delta / (torch.norm(delta))
+        return delta
+
     def _one_pair_origin_augmentation_sequence_min(self, sequence_output_origin,inputs):
         '''
         contrastive learning given one pair sequences (batch)
@@ -223,7 +222,7 @@ class SoftCSRTrainer(Trainer):
         cl_sequence_flatten = cl_sequence_output.view(cl_batch.shape[0], -1)
         batch_size = cl_batch.shape[0] // 2  # 256
         cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
- 
+
         cl_loss_1 = self.cf_criterion(origin_output_slice,cl_output_slice[0])
 
         cl_loss_2 = self.cf_criterion(origin_output_slice,cl_output_slice[1])
@@ -231,6 +230,12 @@ class SoftCSRTrainer(Trainer):
         cl_OA_loss = self.args.alpha_1 * cl_loss_1 + self.args.alpha_2 * cl_loss_2
 
         return cl_OA_loss
+
+    def generate_init_delta(self,embed):
+        delta = embed.data.new(embed.size()).normal_(0, 1) * 1e-5
+        delta.detach()
+        delta.requires_grad_()
+        return delta
 
     def iteration(self, epoch, dataloader, full_sort=True, train=True):
         str_code = "train" if train else "test"
@@ -275,62 +280,62 @@ class SoftCSRTrainer(Trainer):
                 joint_loss_cl_oa.backward(retain_graph=True)
 
                 # inner maximize
-                for i in range(self.args.adv_step):
-                    for cl_batch in cl_batches:
-                        joint_loss_at = 0
-                        cl_batch = torch.cat(cl_batch, dim=0)
-                        cl_batch = cl_batch.to(self.device)
-
-                        # method 1: add perturbation in sequence after encode
-                        if self.args.method_sequence == "Yes":
-                            cl_sequence_output = self.model.forward(cl_batch,[0])
-                            cl_sequence_output = torch.sum(cl_sequence_output.view(cl_sequence_output.shape[0], -1), dim=-1)
-
-                            per_0 = cl_sequence_output.new(cl_sequence_output.size()).normal_(0, 1) * 1e-5
-                            per_0.requires_grad_()
-                            perturbed_sequence = cl_sequence_output.data + per_0
-
+                for cl_batch in cl_batches:
+                    joint_loss_at = 0
+                    cl_batch = torch.cat(cl_batch, dim=0)
+                    cl_batch = cl_batch.to(self.device)
+                    # method 1: add perturbation in sequence after encode
+                    if self.args.method_sequence == "Yes":
+                        cl_sequence_output = self.model.forward(cl_batch, [0])
+                        cl_sequence_output = torch.sum(cl_sequence_output.view(cl_sequence_output.shape[0], -1), dim=-1)
+                        origin_output_slice = torch.sum(sequence_output_origin.view(sequence_output_origin.shape[0], -1), dim=-1).unsqueeze(1)
+                        # init delta
+                        delta=self.generate_init_delta(cl_sequence_output)
+                        delta = self.project(delta, eps=self.args.epsilon_sequence)
+                        # inner maximize
+                        for step in range(self.args.adv_step):
+                            perturbed_sequence = cl_sequence_output.data + delta
+                            # adversarial loss
                             cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
-
                             batch_size = cl_batch.shape[0] // 2
                             cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
                             cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
-
-                            origin_output_slice = torch.sum(sequence_output_origin.view(sequence_output_origin.shape[0], -1),dim=-1).unsqueeze(1)
                             cl_loss_1 = self.cf_criterion(cl_output_slice[0],origin_output_slice)
                             cl_loss_2 = self.cf_criterion(cl_output_slice[1],origin_output_slice)
                             cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
                             joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
 
-                            delta_grad_0, = torch.autograd.grad(joint_loss_at, per_0, only_inputs=True)
+                            delta_grad_0, = torch.autograd.grad(joint_loss_at, delta, only_inputs=True)
                             norm_0 = delta_grad_0.norm()
                             if torch.isnan(norm_0) or torch.isinf(norm_0):
                                 return None
-                            # inner sum
-                            per_0 = per_0 + delta_grad_0 * 1e-3
-                            item_per = per_0
-                            item_per = self.adv_project(item_per, norm_type=self.args.norm_type, eps=self.args.epsilon_sequence)
+                            delta_grad = delta_grad_0 / norm_0
+                            delta = delta + self.args.eta*delta_grad
+                            delta = self.project(delta, eps=self.args.epsilon_sequence)
+                            delta = delta.detach()
+                            delta.requires_grad_()
+                        # train via generate delta
+                        perturbed_sequence = cl_sequence_output + delta.detach()
+                        cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
+                        batch_size = cl_batch.shape[0] // 2
+                        cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
+                        cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
+                        cl_loss_1 = self.cf_criterion(cl_output_slice[0], origin_output_slice)
+                        cl_loss_2 = self.cf_criterion(cl_output_slice[1], origin_output_slice)
+                        cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
+                        joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
+                        joint_loss_at.backward(retain_graph=True)
 
-                            perturbed_sequence = cl_sequence_output + self.args.eta * item_per.detach()
-
-                            # train Again
-                            cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
-                            batch_size = cl_batch.shape[0] // 2
-                            cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
-                            cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
-                            cl_loss_1 = self.cf_criterion(cl_output_slice[0], origin_output_slice)
-                            cl_loss_2 = self.cf_criterion(cl_output_slice[1], origin_output_slice)
-                            cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
-                            joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
-                            joint_loss_at.backward(retain_graph=True)
-
-                        # method 2: add perturbation in item of sequence
-                        if self.args.method_item == "Yes":
-                            cl_item_output = self.model.item_embeddings(cl_batch)
-                            per_0 = cl_item_output.new(cl_item_output.size()).normal_(0, 1) * 1e-5
-
-                            per_0.requires_grad_()
-                            new_cl_sequence_output = cl_item_output.data + per_0
+                    # method 2: add perturbation in item of sequence
+                    if self.args.method_item == "Yes":
+                        cl_item_output = self.model.item_embeddings(cl_batch)
+                        # init delta
+                        delta = self.generate_init_delta(cl_item_output)
+                        delta = self.project(delta, eps=self.args.epsilon_item)
+                        # inner maximize
+                        for step in range(self.args.adv_step):
+                            new_cl_sequence_output = cl_item_output.data + delta
+                            # adversarial loss
                             perturbed_sequence = self.model.forward(cl_batch, new_cl_sequence_output)
                             cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
                             batch_size = cl_batch.shape[0] // 2
@@ -341,21 +346,71 @@ class SoftCSRTrainer(Trainer):
                             cl_loss_2 = self.cf_criterion(cl_output_slice[1], origin_output_slice)
                             cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
                             joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
-                            delta_grad_0, = torch.autograd.grad(joint_loss_at, per_0, only_inputs=True)
+                            # print("delta",delta.size())
+                            delta_grad_0, = torch.autograd.grad(joint_loss_at, delta, only_inputs=True)
                             norm_0 = delta_grad_0.norm()
-
                             if torch.isnan(norm_0) or torch.isinf(norm_0):
                                 return None
+                            delta_grad = delta_grad_0 / norm_0
+                            delta = delta + self.args.eta * delta_grad
+                            delta = self.project(delta,eps=self.args.epsilon_item)
+                            delta = delta.detach()
+                            delta.requires_grad_()
 
-                            per_0 = per_0 + delta_grad_0 * self.args.eta
-                            item_per = per_0
-                            item_per = self.adv_project(item_per, norm_type=self.args.norm_type, eps=self.args.epsilon_item)
+                        # train via generate delta
+                        perturbed_item = cl_item_output + delta.detach()
+                        perturbed_item = self.model.forward(cl_batch, perturbed_item)
+                        cl_sequence_flatten = perturbed_item.view(cl_batch.shape[0], -1)
+                        batch_size = cl_batch.shape[0] // 2
+                        cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
+                        cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
+                        origin_output_slice = sequence_output_origin.view(sequence_output_origin.shape[0], -1)
+                        cl_loss_1 = self.cf_criterion(cl_output_slice[0], origin_output_slice)
+                        cl_loss_2 = self.cf_criterion(cl_output_slice[1], origin_output_slice)
+                        cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
+                        joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
+                        joint_loss_at.backward(retain_graph=True)
 
-                            perturbed_item_gru = cl_item_output + self.args.eta * item_per.detach()
+                    # method 3 : add perturbation in item by update model gru
+                    if self.args.method_gru_theta_update == "Yes":
 
-                            # train Again
-                            perturbed_sequence = self.model.forward(cl_batch, perturbed_item_gru)
-                            cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
+                        gru_pgd = Gru_PGD(self.model.gru_layers, emb_name='gru_layers', eta=self.args.eta)
+                        cl_item_output = self.model.item_embeddings(cl_batch) * 1e-3
+                        # init delta
+                        delta, _ = self.model.gru_layers(cl_item_output)
+                        delta = self.project(delta, eps=self.args.epsilon_gru)
+                        perturbed_gru = cl_item_output + delta
+                        # adversarial loss
+                        perturbed_gru_gru = self.model.forward(cl_batch, perturbed_gru)
+
+                        cl_sequence_flatten = perturbed_gru_gru.view(cl_batch.shape[0], -1)
+                        batch_size = cl_batch.shape[0] // 2
+                        cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
+                        cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
+                        origin_output_slice = sequence_output_origin.view(sequence_output_origin.shape[0], -1)
+                        cl_loss_1 = self.cf_criterion(cl_output_slice[0],
+                                                      origin_output_slice)
+                        cl_loss_2 = self.cf_criterion(cl_output_slice[1],
+                                                      origin_output_slice)
+                        cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
+                        joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
+                        joint_loss_at.backward(retain_graph=True)
+                        gru_pgd.backup_grad()
+                        # inner maximize theta
+                        for k in range(self.args.adv_step):
+                            gru_pgd.attack(is_first_attack=(k == 0))  # 更新 gru_theta_parameters
+                            if k != self.args.adv_step - 1:
+                                self.model.gru_layers.zero_grad()
+                            else:
+                                gru_pgd.restore_grad()
+
+                            delta, _ = self.model.gru_layers(cl_item_output)
+                            delta = self.project(delta, eps=self.args.epsilon_gru)
+
+                            perturbed_item = cl_item_output + delta.detach()
+                            perturbed_item = self.model.forward(cl_batch, perturbed_item)
+
+                            cl_sequence_flatten = perturbed_item.view(cl_batch.shape[0], -1)
                             batch_size = cl_batch.shape[0] // 2
                             cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
                             cl_loss = self.cf_criterion(cl_output_slice[0], cl_output_slice[1])
@@ -364,33 +419,8 @@ class SoftCSRTrainer(Trainer):
                             cl_loss_2 = self.cf_criterion(cl_output_slice[1], origin_output_slice)
                             cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
                             joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
-
                             joint_loss_at.backward(retain_graph=True)
 
-                        # method 3: add perturbation in item by model gru
-                        if self.args.method_gru == "Yes":
-                            cl_item_output = self.model.item_embeddings(cl_batch)
-                            item_per = self.model.GRU4per(cl_item_output) * 1e-5
-                            item_per = item_per / (torch.norm(item_per, dim=-1, keepdim=True) + self.args.sigma_gru)
-                            perturbed_item_gru = cl_item_output + self.args.gamma_gru * item_per.detach()
-                            # train Again
-                            perturbed_sequence = self.model.forward(cl_batch, perturbed_item_gru)
-                            cl_sequence_flatten = perturbed_sequence.view(cl_batch.shape[0], -1)
-                            batch_size = cl_batch.shape[0] // 2
-                            cl_output_slice = torch.split(cl_sequence_flatten, batch_size)
-                            cl_loss = self.cf_criterion(cl_output_slice[0],cl_output_slice[1])
-                            origin_output_slice = sequence_output_origin.view(sequence_output_origin.shape[0], -1)
-                            cl_loss_1 = self.cf_criterion(cl_output_slice[0],
-                                                          origin_output_slice)
-                            cl_loss_2 = self.cf_criterion(cl_output_slice[1],
-                                                          origin_output_slice)
-                            cl_OA_loss = self.args.beta_1 * cl_loss_1 + self.args.beta_2 * cl_loss_2
-                            joint_loss_at = self.args.beta_0 * cl_loss + cl_OA_loss
-                            joint_loss_at.backward(retain_graph=True)
-                        # ——————————————
-                        self.max_optimizer.step()
-                        self.max_optimizer.zero_grad()
-                        # ——————————————
                 self.min_optimizer.step()
                 self.min_optimizer.zero_grad()
 
@@ -402,9 +432,6 @@ class SoftCSRTrainer(Trainer):
                 "rec_avg_loss": '{:.4f}'.format(rec_avg_loss / len(rec_cf_data_iter)),
                 "joint_avg_loss": '{:.4f}'.format(joint_avg_loss / len(rec_cf_data_iter)),
             }
-            # for i, cl_individual_avg_loss in enumerate(cl_individual_avg_losses):
-            #     post_fix['cl_pair_'+str(i)+'_loss'] = '{:.4f}'.format(cl_individual_avg_loss / len(rec_cf_data_iter))
-
             if (epoch + 1) % self.args.log_freq == 0: # args.log_freq=1
                 print(str(post_fix))
 
