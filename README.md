@@ -12,12 +12,12 @@ To train model Soft-seq, Soft-item, Soft-gru on 'Beauty' dataset, change to the 
 For example, you can directly train Soft-gru model by running:
 
 ```
-python main.py --data_name=Beauty --method_sequence=No --method_item=No --method_gru=Yes
+python main.py --data_name=Beauty --method_sequence=No --method_item=No --method_gru_theta_update=Yes
 ```
 
 The result as follow:
 
 ```
-{'HIT@5': 0.0477, 'HIT@10': 0.0711, 'HIT@20': 0.0987, 'NDCG@5': 0.0325, 'NDCG@10': 0.04, 'NDCG@20': 0.047}
+{'HIT@5': 0.0521, 'HIT@10': 0.0768, 'HIT@20': 0.1074, 'NDCG@5': 0.035, 'NDCG@10': 0.043, 'NDCG@20': 0.0506}
 ```
 
